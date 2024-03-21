@@ -1,2 +1,10 @@
 pyaudio==0.2.14
 faster-whisper==1.0.1
+torch
+scipy==1.12.0
+pyannote.audio==1.1.2
+webrtcvad==2.0.10
+joblib==1.0.0
+pydub==0.25.1
+presidio-analyzer==2.2.352
+presidio-anonymizer==2.2.353
