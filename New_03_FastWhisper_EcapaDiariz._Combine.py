@@ -29,6 +29,7 @@ from diarization.voice_activity_detection import voice_activity_detection
 
 from New_02_ECAPA_Diarization import pairwiseDists
 from New_02_ECAPA_Diarization import SpeakerDiarizationChunkEcapa as SpeakerDiarization
+from statistics import mode
 
 from anonymization.anonymization import anonymize_text, anonymize_text_with_deny_list
 import json
@@ -174,10 +175,13 @@ def process_asr_and_diarizer(diarizer_result, asr_result, chunk_metadata:dict, C
     utterance_end_time = None
     prev_speaker = None
     for timestamp, data in reformatted_asr_result.items():
+        """
         if timestamp in reformatted_diar_result:  # O(1) lookup
             speaker = reformatted_diar_result[timestamp]
         else:
             speaker = 'undefined'
+        """
+        speaker= mode(diarizer_result.values())[0]
 
         if speaker not in speaker_list:
             speaker_list.append(speaker)
@@ -239,7 +243,7 @@ def main():
     # Start recording the audio
     SAMPLE_RATE = 16000  # Hz, see load_video for requirements
     CHUNK_LENGTH = 3  # Define the frequency of recording in seconds
-    DIARIZE_STEP_SIZE= 1 # Define the frequency of diarization in seconds
+    DIARIZE_STEP_SIZE= 0.5 # Define the frequency of diarization in seconds
     MIN_CHUNK_LEN = 0.1 # seconds, chunks shorter than this will be skipped
     p= pyaudio.PyAudio()
     stream= p.open(format= pyaudio.paInt16, channels=1, rate= SAMPLE_RATE, input=True, frames_per_buffer= 1024)
@@ -274,7 +278,7 @@ def main():
                 text = segment.text  # Transcribed text of the segment
                 confidence= segment.avg_logprob
                 accumulated_transcripts+= text+" "
-                print(seg_start_time, "to", seg_end_time)
+                #print(seg_start_time, "to", seg_end_time)
                 
                 # Calculate the closest matching speaker in the segment
                 audio_to_diarize=  extract_audio_between_timestamps(recorded_audio, SAMPLE_RATE, seg_start_time, seg_end_time) # Extract the audio using timeframe
@@ -290,13 +294,15 @@ def main():
 
                 diarizer_result = diarizer.getResults(audio_to_diarize)
                 #print("--------------------- diarizer_result -------------------------------")
-                print(diarizer_result)
+                #print(diarizer_result)
 
                 asr_result= {seg_start_time:{'word': text, 'confidence':confidence, 'end_time':seg_end_time}}
                 chunk_results= process_asr_and_diarizer(diarizer_result, asr_result= asr_result, chunk_metadata= chunk_metadata, CHUNK_LENGTH= CHUNK_LENGTH)
                 #chunk_results= process_asr_and_diarizer(diarizer_result, asr_result= segments, chunk_metadata= chunk_metadata, CHUNK_LENGTH= CHUNK_LENGTH)
                 #print("--------------------- chunk_results -------------------------------")
                 print(chunk_results)
+                print(chunk_results['utterances'][0]['speaker'],":", text)
+                print("----------------------------------------------------------------------------------------")
                 """
                 try:
                     diarizer_result = diarizer.getResults(audio_to_diarize)
