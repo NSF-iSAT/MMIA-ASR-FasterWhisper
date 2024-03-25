@@ -109,131 +109,6 @@ def load_video_to_ndarray(filepath):
     sig_nsamp = len(sig)
     return sig, sig_nsamp
 
-
-
-def process_asr_and_diarizer(diarizer_result, asr_result, chunk_metadata:dict, CHUNK_LENGTH): #chunk_path:str,
-    """process a chunk
-
-    Args:
-        chunk_path (str): path to chunk (on local filesystem)
-        diarizer_result (dict): An ordered dictionary with start time and speaker ID 
-        asr_result (str): Contain the transcript of this segment 
-        chunk_metadata (dict): chunk info with fields ['sessionID','chunk_number','lesson','groupid',...] #TODO: decide on metadata 
-
-    returns:
-        chunk_results: _description_ #TODO: do we still need it to bea generator or can it just be a regular return value
-    """    
-    #chunk, chunk_len_samp = load_video_to_ndarray(chunk_path) 
-
-    # ASR setup
-
-    prev_chunk = None  # ASR will use previous chunk to catch words on chunk boundary
-    prev_asr_result = None  # ASR will use previous ASRresult to catch words on chunk boundary
-
-    # Output dict setup
-    #min_chunk_samp = SAMPLE_RATE * MIN_CHUNK_LEN
-    utterance_num = 0
-
-
-    #print(f"\nProcessing video from {chunk_metadata["sessionID"]}, chunk {chunk_metadata['chunk_number']} ...\n")
-
-    # Output dict setup
-    speaker_list = []
-
-    chunk_start_sec = float(chunk_metadata.get('start_sec', 0))#TODO: Aravind: make sure chunk_metadata contains key 'start_sec'
-    chunk_end_sec = float(chunk_metadata.get('end_sec', CHUNK_LENGTH))# Aravind: make sure chunk_metadata contains key 'end_sec'
-
-    chunk_results = chunk_metadata # copy some fields from the input chunk metadata
-
-    if len(diarizer_result) == 0:
-        chunk_results['unique_speakers'] = []
-        chunk_results['signal_to_noise'] = 0
-        chunk_results['utterances'] = {}
-        return chunk_results
-
-    reformatted_diar_result = {(chunk_start_sec + float(key)): ','.join(value) for key, value in diarizer_result.items()} # change from chunk timing to overall timing
-    #print("------------------------- reformatted_diar_result -------------------------------------------")
-    #print(reformatted_diar_result)
-
-    # ASR
-    reformatted_asr_result = {(chunk_start_sec + round(float(key), 1)): value for key, value in asr_result.items()} # change from chunk timing to overall timing
-
-    #reformatted_asr_result= {chunk_start_sec: asr_result}
-    #print("------------------------- reformatted_asr_result -------------------------------------------")
-    #print(reformatted_asr_result)
-
-    # print('asr result is', asr_result)
-    # Merge Diarizer & ASR Output
-
-    # TODO: Rosy: Update implementation to assign words to a speaker when the diarizer has no output,
-    #  but the same speaker is recorded before and after the gap (see ASR.BTS_ASR.mergeDiarizedASR)
-
-    merged_diar_asr_result = []
-    partial_utterance = []
-    confidences = []
-    utterance_start_time = None
-    utterance_end_time = None
-    prev_speaker = None
-    for timestamp, data in reformatted_asr_result.items():
-        """
-        if timestamp in reformatted_diar_result:  # O(1) lookup
-            speaker = reformatted_diar_result[timestamp]
-        else:
-            speaker = 'undefined'
-        """
-        speaker= mode(diarizer_result.values())[0]
-
-        if speaker not in speaker_list:
-            speaker_list.append(speaker)
-
-        if prev_speaker and prev_speaker == speaker:
-            # continue concatenating output for this utterance as this word is from the same speaker as previous word
-            partial_utterance.append(data['word'])
-            confidences.append(data['confidence'])
-            utterance_end_time = round(chunk_start_sec + data['end_time'], 1)
-        else:
-            if prev_speaker:
-                # end previous utterance
-                merged_diar_asr_result.append({'utterance_id': utterance_num,
-                                                'text': " ".join(partial_utterance),
-                                                'speaker': prev_speaker,
-                                                'start_time': utterance_start_time,
-                                                'end_time': utterance_end_time,
-                                                'confidence': round(np.mean(confidences), 5)})
-                utterance_num += 1
-
-            # start new utterance
-            partial_utterance = [data['word']]
-            confidences = [data['confidence']]
-            utterance_start_time = timestamp
-            utterance_end_time = round(chunk_start_sec + data['end_time'], 1)
-
-        prev_speaker = speaker
-
-    if partial_utterance:
-        # start the anonymization process
-        anonymized_text = anonymize_text(" ".join(partial_utterance))
-        merged_diar_asr_result.append({'utterance_id': utterance_num,
-                                        'text': anonymized_text,
-                                        'speaker': prev_speaker,
-                                        'start_time': utterance_start_time,
-                                        'end_time': utterance_end_time,
-                                        'confidence': round(np.mean(confidences), 5)})
-        utterance_num += 1
-    # Final chunk results to be passed to inference
-    session_id = chunk_metadata["sessionID"]
-
-    # SNR
-    #snr_result = wada_snr(chunk)
-
-    # Final chunk results to be passed to inference
-    chunk_results["sessionID"] = session_id
-    #chunk_results['signal_to_noise'] = snr_result
-    chunk_results['unique_speakers'] = speaker_list
-    chunk_results['utterances'] = json.loads(json.dumps(merged_diar_asr_result), parse_float=Decimal)
-    return chunk_results
-
-
 def main():
 
     # Initialize the fast whisper models
@@ -243,19 +118,21 @@ def main():
     # Start recording the audio
     SAMPLE_RATE = 16000  # Hz, see load_video for requirements
     CHUNK_LENGTH = 3  # Define the frequency of recording in seconds
-    DIARIZE_STEP_SIZE= 0.5 # Define the frequency of diarization in seconds
     MIN_CHUNK_LEN = 0.1 # seconds, chunks shorter than this will be skipped
     p= pyaudio.PyAudio()
     stream= p.open(format= pyaudio.paInt16, channels=1, rate= SAMPLE_RATE, input=True, frames_per_buffer= 1024)
     print("Recording Started...")
 
+    # Variable the transcript to collect all the transcripts in this session for logging
     accumulated_transcripts= ""
 
     # Initialze the diarizer with recorded enrollments
     enrollment_utterances = {'Niranjan':load_video_to_ndarray('Enrollment_Niranjan.wav'),
                              'Kamala Harris':load_video_to_ndarray('Enrollment_Kamala_Harris.wav'), 
                              'Trump':load_video_to_ndarray('Enrollment_Trump.wav')}
-    diarizer = SpeakerDiarization(refSpeakers=enrollment_utterances, stepSize=DIARIZE_STEP_SIZE) #stepSize decides the frequency of diarization. Say if it is 0.5 then the result will be given as a speaker ID for every 0.5secs of the input audio in a dictionary.
+    diarizer = SpeakerDiarization(refSpeakers=enrollment_utterances) #stepSize decides the frequency of diarization. Say if it is 0.5 then the result will be given as a speaker ID for every 0.5secs of the input audio in a dictionary.
+    sessionID= 1
+    chunk_number= 1
 
     try:
         while True:
@@ -263,71 +140,46 @@ def main():
             chunk_file= 'temp_chunk.wav'
             recorded_audio= record_chunk(p, stream, chunk_file, chunk_length=CHUNK_LENGTH)
             segments, info= model.transcribe(chunk_file, beam_size= 5)
-
             os.remove(chunk_file)
-
-            sessionID= 0
-            chunk_number= 0
+            
             # Unpack the segments and diarize them individually. 
-
+            utterance_num= 1
             
             for segment in segments:
-                #print("Segment entering")
-                seg_start_time = segment.start # Start time of the segment
-                seg_end_time = segment.end # End time of the segment
-                text = segment.text  # Transcribed text of the segment
-                confidence= segment.avg_logprob
-                accumulated_transcripts+= text+" "
-                #print(seg_start_time, "to", seg_end_time)
+                segment_length= segment.end- segment.start # Length of the segment. Used for diarizer.
+                accumulated_transcripts+= segment.text+" "
                 
-                # Calculate the closest matching speaker in the segment
-                audio_to_diarize=  extract_audio_between_timestamps(recorded_audio, SAMPLE_RATE, seg_start_time, seg_end_time) # Extract the audio using timeframe
-                #print(len(audio_to_diarize))
-
-                chunk_metadata = {"sessionID": sessionID,
-                                "chunk_number":chunk_number,
-                                "start_sec":seg_start_time,
-                                "end_sec":seg_end_time
-                                }
-                sessionID+=1
-                chunk_number+=1
-
-                diarizer_result = diarizer.getResults(audio_to_diarize)
-                #print("--------------------- diarizer_result -------------------------------")
-                #print(diarizer_result)
-
-                asr_result= {seg_start_time:{'word': text, 'confidence':confidence, 'end_time':seg_end_time}}
-                chunk_results= process_asr_and_diarizer(diarizer_result, asr_result= asr_result, chunk_metadata= chunk_metadata, CHUNK_LENGTH= CHUNK_LENGTH)
-                #chunk_results= process_asr_and_diarizer(diarizer_result, asr_result= segments, chunk_metadata= chunk_metadata, CHUNK_LENGTH= CHUNK_LENGTH)
-                #print("--------------------- chunk_results -------------------------------")
-                print(chunk_results)
-                print(chunk_results['utterances'][0]['speaker'],":", text)
-                print("----------------------------------------------------------------------------------------")
-                """
-                try:
-                    diarizer_result = diarizer.getResults(audio_to_diarize)
-                    print("--------------------- diarizer_result -------------------------------")
-                    print(diarizer_result)
-                    
-                    chunk_results= process_asr_and_diarizer(diarizer_result, asr_result= text, chunk_metadata= chunk_metadata)
-                    print("--------------------- chunk_results -------------------------------")
-                    print(chunk_results)
-
-                """
-                """
-                    speaker= [i for i in diarizer_result.values()][0][0]
-                    print("--------------------- speaker 1 -------------------------------")
-                    print(speaker)
-                    speaker= diarizer_result['0.0'][0] # This is just taking the first detected speaker, rather just the mode of speakers.
-                    print("--------------------- speaker 2 -------------------------------")
-                    #print("Speaker:",speaker)
-                    print(speaker,":", text) 
-                """
-                """
+                # Find the closest matching speaker of this segment
+                audio_to_diarize=  extract_audio_between_timestamps(recorded_audio, SAMPLE_RATE, segment.start, segment.end) # Extract the audio using timeframe
+                try: # Sometimes the segement length would to too short to diarize and fails. So, this exception function is used to skip such cases.
+                    diarizer_result = diarizer.getResults(audio_to_diarize, stepSize= segment_length)
                 except:
                     continue
-                """
-                #print(speaker,":", text)           
+                speaker= list(diarizer_result.values())[0][0]
+
+                # Prepare the output dictionary
+                chunk_results = {"sessionID": sessionID,
+                                "chunk_number":chunk_number,
+                                "start_sec":segment.start,
+                                "end_sec":segment.end
+                                }
+                unique_speakers= [speaker] # Will always have 1 speaker since the dictionary is at segment level and each segment will be associated to only one speaker.
+                utterances= [{'utterance_id': utterance_num,
+                              'text': segment.text,
+                              'speaker': speaker,
+                              'start_time': segment.start,
+                              'end_time': segment.end,
+                              'confidence': segment.avg_logprob
+                              }]      
+                chunk_results['unique_speakers']= unique_speakers
+                chunk_results['utterances']= utterances   
+
+                print(chunk_results)
+                print(speaker,":", segment.text)
+                print("----------------------------------------------")
+                utterance_num+=1 
+
+            chunk_number+=1     
     except KeyboardInterrupt:
         print("Stopping...")
 

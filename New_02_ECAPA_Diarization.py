@@ -116,7 +116,7 @@ class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
         self.clustersNorm = F.normalize(self.clusters)
 
     def getEmb(
-        self, data: np.ndarray, mean: bool = False, padding: bool = False
+        self, data: np.ndarray, mean: bool = False, padding: bool = False, stepSize= None
     ) -> torch.Tensor:
         """
         Extracts speaker embeddings from the input audio data using the encoder.
@@ -129,6 +129,8 @@ class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
         Returns:
             torch.Tensor: The extracted speaker embeddings.
         """
+        if (stepSize==None): stepSize= self.stepSize
+        
         if padding:
             data = np.pad(
                 data,
@@ -137,17 +139,12 @@ class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
                 constant_values=0,
             )
         datatensor = []
-        for i in range(
-            int(data.shape[0] / self.sampleRate / self.stepSize - 2 / self.stepSize)
-        ):
-            datatensor.append(
-                data[
-                    int(i * self.stepSize * self.sampleRate) : int(
-                        i * self.stepSize * self.sampleRate
-                    )
-                    + 2 * self.sampleRate
-                ]
-            )
+        for i in range(int(data.shape[0] / self.sampleRate / stepSize - 2 / stepSize)):
+            datatensor.append( data[ int(i * stepSize * self.sampleRate) : int(i * stepSize * self.sampleRate) + 2 * self.sampleRate])
+
+        #print("------------ Datatensor Info --------------")
+        #print(type(datatensor), len(datatensor), end=" ")
+        #print(len(datatensor[0]))
         datatensor = np.stack(datatensor)
         datatensor = torch.from_numpy(datatensor).float().to(self.device)
         with torch.no_grad():
@@ -158,7 +155,7 @@ class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
             embs = torch.mean(embs, 0)
         return embs
 
-    def getResults(self, audio: np.ndarray) -> OrderedDict:
+    def getResults(self, audio: np.ndarray, stepSize= None) -> OrderedDict:
         """
         Processes the input audio data to obtain speaker diarization results.
 
@@ -168,10 +165,13 @@ class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
         Returns:
             OrderedDict: An OrderedDict containing timestamps and corresponding speaker labels, representing the diarization results.
         """
+        if stepSize== None:
+            stepSize= self.stepSize
+        
         data = self.getData((audio, len(audio)))
         if len(audio) == 0:
             return OrderedDict()
-        embs = self.getEmb(data, padding=True)
+        embs = self.getEmb(data, padding=True, stepSize= stepSize)
         embsNorm = F.normalize(embs)
 
         """
