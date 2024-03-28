@@ -133,6 +133,7 @@ def main():
     diarizer = SpeakerDiarization(refSpeakers=enrollment_utterances) #stepSize decides the frequency of diarization. Say if it is 0.5 then the result will be given as a speaker ID for every 0.5secs of the input audio in a dictionary.
     sessionID= 1
     chunk_number= 1
+    chunk_start= 0 
 
     try:
         while True:
@@ -144,10 +145,12 @@ def main():
             
             # Unpack the segments and diarize them individually. 
             utterance_num= 1
-            
+            unique_speakers= list()
+
             for segment in segments:
                 segment_length= segment.end- segment.start # Length of the segment. Used for diarizer.
                 accumulated_transcripts+= segment.text+" "
+                seg_start_relative= chunk_start+ segment.start
                 
                 # Find the closest matching speaker of this segment
                 audio_to_diarize=  extract_audio_between_timestamps(recorded_audio, SAMPLE_RATE, segment.start, segment.end) # Extract the audio using timeframe
@@ -160,10 +163,11 @@ def main():
                 # Prepare the output dictionary
                 chunk_results = {"sessionID": sessionID,
                                 "chunk_number":chunk_number,
-                                "start_sec":segment.start,
-                                "end_sec":segment.end
+                                "start_sec":seg_start_relative,
+                                "end_sec":seg_start_relative+segment_length
                                 }
-                unique_speakers= [speaker] # Will always have 1 speaker since the dictionary is at segment level and each segment will be associated to only one speaker.
+                if speaker not in unique_speakers: 
+                    unique_speakers.append(speaker)
                 utterances= [{'utterance_id': utterance_num,
                               'text': segment.text,
                               'speaker': speaker,
@@ -179,7 +183,9 @@ def main():
                 print("----------------------------------------------")
                 utterance_num+=1 
 
-            chunk_number+=1     
+            chunk_number+=1  
+            chunk_start+= CHUNK_LENGTH
+               
     except KeyboardInterrupt:
         print("Stopping...")
 
