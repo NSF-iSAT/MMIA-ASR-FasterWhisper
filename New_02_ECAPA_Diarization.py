@@ -16,7 +16,7 @@ import torch
 import torch.nn.functional as F
 #from speechbrain.pretrained import EncoderClassifier
 from speechbrain.inference.speaker import EncoderClassifier
-from diarization.speaker_diarization_chunk import SpeakerDiarization
+# from diarization.speaker_diarization_chunk import SpeakerDiarization
 from sklearn.metrics.pairwise import cosine_similarity
 
 from diarization.voice_activity_detection import voice_activity_detection
@@ -58,7 +58,7 @@ def pairwise_cosine_similarity(A, B):
     return cos_sim
 
 
-class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
+class SpeakerDiarizationChunkEcapa():
     def __init__(
         self,
         refSpeakers: dict,
@@ -155,7 +155,7 @@ class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
             embs = torch.mean(embs, 0)
         return embs
 
-    def getResults(self, audio: np.ndarray, stepSize= None) -> OrderedDict:
+    def getResults(self, audio: np.ndarray, stepSize= None) -> OrderedDict: # TODO: write a separate method for chunk results versus single audio results   
         """
         Processes the input audio data to obtain speaker diarization results.
 
