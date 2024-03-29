@@ -16,7 +16,7 @@ import torch
 import torch.nn.functional as F
 #from speechbrain.pretrained import EncoderClassifier
 from speechbrain.inference.speaker import EncoderClassifier
-from diarization.speaker_diarization_chunk import SpeakerDiarization
+# from diarization.speaker_diarization_chunk import SpeakerDiarization
 from sklearn.metrics.pairwise import cosine_similarity
 
 from diarization.voice_activity_detection import voice_activity_detection
@@ -58,7 +58,7 @@ def pairwise_cosine_similarity(A, B):
     return cos_sim
 
 
-class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
+class SpeakerDiarizationChunkEcapa():
     def __init__(
         self,
         refSpeakers: dict,
@@ -115,6 +115,15 @@ class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
         self.clusters = torch.stack(self.clusters)
         self.clustersNorm = F.normalize(self.clusters)
 
+    def getData(self, audio):
+        if isinstance(audio, str):
+            sampleRate, data = wavfile.read(audio)
+            assert sampleRate == 16000, "The sample rate of audio should be 16000"
+            return data
+        else:
+            data, rate = audio
+            return data
+        
     def getEmb(
         self, data: np.ndarray, mean: bool = False, padding: bool = False, stepSize= None
     ) -> torch.Tensor:
@@ -142,9 +151,6 @@ class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
         for i in range(int(data.shape[0] / self.sampleRate / stepSize - 2 / stepSize)):
             datatensor.append( data[ int(i * stepSize * self.sampleRate) : int(i * stepSize * self.sampleRate) + 2 * self.sampleRate])
 
-        #print("------------ Datatensor Info --------------")
-        #print(type(datatensor), len(datatensor), end=" ")
-        #print(len(datatensor[0]))
         datatensor = np.stack(datatensor)
         datatensor = torch.from_numpy(datatensor).float().to(self.device)
         with torch.no_grad():
@@ -155,7 +161,7 @@ class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
             embs = torch.mean(embs, 0)
         return embs
 
-    def getResults(self, audio: np.ndarray, stepSize= None) -> OrderedDict:
+    def getResults(self, audio: np.ndarray, stepSize= None) -> OrderedDict: # TODO: write a separate method for chunk results versus single audio results   
         """
         Processes the input audio data to obtain speaker diarization results.
 
@@ -187,34 +193,5 @@ class SpeakerDiarizationChunkEcapa(SpeakerDiarization):
         """
         #dists = pairwiseDists(embsNorm, self.clustersNorm)
         dists= pairwise_cosine_similarity(embsNorm, self.clustersNorm)
-        
-        #print("--------------------Dist----------------------")
-        #print(dists)
-        #preds = torch.argmin(dists, dim=1)
         preds = torch.argmax(dists, dim=1)
-        #print("--------------------Preds----------------------")
-        #print(preds)
-                
-
-        # get vad results if vad flag is true
-        if self.vad:
-            vadRes = np.array(
-                voice_activity_detection(data, self.sampleRate, 1)
-            ).astype(int)
-            numSegments = int(self.stepSize * 1000 / 20)
-            padLength = numSegments - vadRes.shape[0] % numSegments
-            vadRes = np.pad(vadRes, (0, padLength), mode="symmetric")
-            vadRes = np.reshape(vadRes, (-1, numSegments))
-            vadRes = np.sum(vadRes, 1) > 2
-
-        result = OrderedDict()
-        for pCnt, p in enumerate(preds):
-            timestamp = pCnt * self.stepSize
-            label = self.label[p.item()]
-            if self.vad:
-                if vadRes[pCnt]:
-                    result["{:0.1f}".format(timestamp)] = label
-            else:
-                result["{:0.1f}".format(timestamp)] = label
-
-        return result
+        return self.label[preds.item()][0]
