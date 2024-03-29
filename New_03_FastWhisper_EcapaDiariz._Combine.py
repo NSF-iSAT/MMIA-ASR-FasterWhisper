@@ -22,9 +22,7 @@ from scipy.io import wavfile
 from itertools import combinations
 from collections import OrderedDict
 from pydub import AudioSegment
-#from pyannote.audio import Task, TaskOutput, TaskType
-from pyannote.audio.train.task import Task, TaskOutput, TaskType
-from pyannote.audio.models import SincTDNN
+
 from diarization.voice_activity_detection import voice_activity_detection
 
 from New_02_ECAPA_Diarization import pairwiseDists
@@ -131,24 +129,32 @@ def main():
                              'Kamala Harris':load_video_to_ndarray('Enrollment_Kamala_Harris.wav'), 
                              'Trump':load_video_to_ndarray('Enrollment_Trump.wav')}
     diarizer = SpeakerDiarization(refSpeakers=enrollment_utterances) #stepSize decides the frequency of diarization. Say if it is 0.5 then the result will be given as a speaker ID for every 0.5secs of the input audio in a dictionary.
-    sessionID= 1
-    chunk_number= 1
-    chunk_start= 0 
+    sessionID= 1 # TODO: get this sort of metadaata from calling function
+    chunk_number= 0 # 
+    chunk_start= 0.0 
 
     try:
         while True:
             # Retrive the recorded audio and transcribe them
             chunk_file= 'temp_chunk.wav'
             recorded_audio= record_chunk(p, stream, chunk_file, chunk_length=CHUNK_LENGTH)
-            segments, info= model.transcribe(chunk_file, beam_size= 5)
+            segments, info= model.transcribe(chunk_file, beam_size= 5, language='en', vad_filter=True) # Note: we can get faster with greedy search instead of beam search.
             os.remove(chunk_file)
-            
+            # Prepare the output dictionary
+            chunk_results = {"sessionID": sessionID,
+                            "chunk_number":chunk_number,
+                            "start_sec":chunk_start, # this needs to be time relative to start of audio file
+                            "end_sec":chunk_start+chunk_length #  this needs to be time relative to start of audio file
+                            }
+                            
             # Unpack the segments and diarize them individually. 
-            utterance_num= 1
+            utterance_num= 0 #
             unique_speakers= list()
+            utterances = list()
 
             for segment in segments:
                 segment_length= segment.end- segment.start # Length of the segment. Used for diarizer.
+                segment.text= anonymize_text_with_deny_list(segment.text) # Anonymize the text
                 accumulated_transcripts+= segment.text+" "
                 seg_start_relative= chunk_start+ segment.start
                 
@@ -160,28 +166,29 @@ def main():
                     continue
                 speaker= list(diarizer_result.values())[0][0]
 
-                # Prepare the output dictionary
-                chunk_results = {"sessionID": sessionID,
-                                "chunk_number":chunk_number,
-                                "start_sec":seg_start_relative,
-                                "end_sec":seg_start_relative+segment_length
-                                }
+
                 if speaker not in unique_speakers: 
                     unique_speakers.append(speaker)
-                utterances= [{'utterance_id': utterance_num,
+
+                utterances.append({'utterance_id': utterance_num,
                               'text': segment.text,
                               'speaker': speaker,
-                              'start_time': segment.start,
-                              'end_time': segment.end,
+                              'start_time': segment.start + chunk_start,
+                              'end_time': segment.end + chunk_end,
                               'confidence': segment.avg_logprob
-                              }]      
-                chunk_results['unique_speakers']= unique_speakers
-                chunk_results['utterances']= utterances   
+                              })    
 
-                print(chunk_results)
                 print(speaker,":", segment.text)
-                print("----------------------------------------------")
                 utterance_num+=1 
+
+            snr_result = wada_snr(recorded_audio) 
+
+            chunk_results['unique_speakers']=unique_speakers
+            chunk_results['utterances']= utterances  
+            chunk_results['signal_to_noise'] = snr_result
+            yield(chunk_results)
+            print(chunk_results)
+            print("----------------------------------------------")
 
             chunk_number+=1  
             chunk_start+= CHUNK_LENGTH
